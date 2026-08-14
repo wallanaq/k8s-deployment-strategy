@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: qrcode-api
+  datasource:
+    url: jdbc:postgresql://localhost:5432/pix_qrcode
+    username: ${DB_USERNAME:qrcode_api}
+    password: ${DB_PASSWORD:qrcode_api}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  docker:
+    compose:
+      enabled: false

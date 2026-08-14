@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: qrcode-api-postgres
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-qrcode_api}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-qrcode_api}
+      POSTGRES_DB: pix_qrcode
+    ports:
+      - "5432:5432"
+    volumes:
+      - qrcode_api_pgdata:/var/lib/postgresql/data
+
+volumes:
+  qrcode_api_pgdata:

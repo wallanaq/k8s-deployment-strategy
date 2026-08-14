@@ -1,0 +1,18 @@
+@host = http://localhost:8080
+
+### Create QrCode
+# @name qrcode
+POST {{host}}/api/pix/qrcodes
+Content-Type: application/json
+
+{
+  "chavePix": "exemplo@email.com",
+  "nomeRecebedor": "Fulano de Tal",
+  "cidadeRecebedor": "Brasilia",
+  "valor": "10.00",
+  "txid": "PEDIDO123",
+  "descricao": "Pagamento de exemplo"
+}
+
+### Get QrCode
+GET {{host}}/api/pix/qrcodes/{{qrcode.response.body.id}}
