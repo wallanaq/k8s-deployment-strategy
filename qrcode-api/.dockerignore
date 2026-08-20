@@ -1,0 +1,10 @@
+target/
+.git/
+*.md
+Dockerfile
+.dockerignore
+.idea/
+.vscode/
+*.iml
+docker-compose.yml
+rest-client.http
