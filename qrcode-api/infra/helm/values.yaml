@@ -1,0 +1,162 @@
+# qrcode-api overrides for the charts/base-webapp chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Makes the rendered resources (Deployment, Service, etc.) come out named
+# "qrcode-api" even though the chart itself has no knowledge of that name.
+nameOverride: qrcode-api
+
+# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+replicaCount: 1
+
+# This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+image:
+  # Published by .github/workflows/build-qrcode-api.yml to GHCR; override per-environment.
+  # Package visibility is public, so no imagePullSecrets are required to pull it.
+  repository: ghcr.io/wallanaq/k8s-deployment-strategy/qrcode-api
+  # This sets the pull policy for images.
+  pullPolicy: IfNotPresent
+  # The chart's default tag fallback is .Chart.AppVersion ("0.0.1"), but the
+  # build workflow (.github/workflows/build-qrcode-api.yml) tags images with
+  # short-SHA and "latest", not semver -- so an explicit tag is required here.
+  tag: latest
+
+# This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+fullnameOverride: ""
+
+# This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+serviceAccount:
+  # Specifies whether a service account should be created.
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account.
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template.
+  name: ""
+
+# This is for setting Kubernetes Annotations to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+podAnnotations: {}
+# This is for setting Kubernetes Labels to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+# Matches the non-root "spring" user (uid 1001) baked into the qrcode-api image.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# Environment variables for the Spring datasource (see application.yaml).
+# DB_HOST/DB_PORT point at the plain-manifest Postgres Service in
+# qrcode-api/infra/postgres/ (installed via "make install-postgres").
+# Username/password/db name are read from the same Secret Postgres itself
+# bootstraps from (qrcode-api-postgres-credentials), so the two never drift.
+env:
+  - name: DB_HOST
+    value: qrcode-api-postgres.qrcode-api.svc.cluster.local
+  - name: DB_PORT
+    value: "5432"
+  - name: DB_NAME
+    valueFrom:
+      secretKeyRef:
+        name: qrcode-api-postgres-credentials
+        key: POSTGRES_DB
+  - name: DB_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: qrcode-api-postgres-credentials
+        key: POSTGRES_USER
+  - name: DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: qrcode-api-postgres-credentials
+        key: POSTGRES_PASSWORD
+
+# This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+service:
+  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+  type: ClusterIP
+  # qrcode-api listens on 8080 (see Dockerfile EXPOSE / application.yaml).
+  port: 8080
+
+# -- Expose the service via gateway-api HTTPRoute, attached to the shared
+# istio-gateway (infra/kubernetes/istio/gateway.yaml). Hostnames are left
+# unset so the chart auto-derives "qrcode-api.k8s.orb.local" from
+# nameOverride + httpRoute.domain (see charts/base-webapp/values.yaml).
+httpRoute:
+  enabled: true
+  #   filters:
+  #   - type: RequestHeaderModifier
+  #     requestHeaderModifier:
+  #       set:
+  #       - name: My-Overwrite-Header
+  #         value: this-is-the-only-value
+  #       remove:
+  #       - User-Agent
+  # - matches:
+  #   - path:
+  #       type: PathPrefix
+  #       value: /echo
+  #     headers:
+  #     - name: version
+  #       value: v2
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+# Backed by spring-boot-starter-actuator (see pom.xml).
+livenessProbe:
+  httpGet:
+    path: /actuator/health
+    port: http
+readinessProbe:
+  httpGet:
+    path: /actuator/health
+    port: http
+
+# This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+  # - name: foo
+  #   secret:
+  #     secretName: mysecret
+  #     optional: false
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+  # - name: foo
+  #   mountPath: "/etc/foo"
+  #   readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qrcode-api-postgres
+  namespace: qrcode-api
+  labels:
+    app: qrcode-api-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qrcode-api-postgres
+  template:
+    metadata:
+      labels:
+        app: qrcode-api-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: qrcode-api-postgres-credentials
+          env:
+            # Mounting a PVC's root as the data dir trips Postgres's "directory
+            # not empty" check on CSI drivers that leave a lost+found entry
+            # there; pointing PGDATA at a subdirectory avoids that.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "$(POSTGRES_USER)", "-d", "$(POSTGRES_DB)"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: qrcode-api-postgres-data
