@@ -1,0 +1,16 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: istio
+  namespace: istio-system
+spec:
+  profile: ambient
+  values:
+    cni:
+      # OrbStack's built-in CNI doesn't drop a conflist in /etc/cni/net.d,
+      # so the default "chained" mode (append to an existing CNI config)
+      # never finds anything to chain onto and hangs forever.
+      chained: false
+  # No components.ingressGateways here: the Gateway API Gateway resource
+  # (infra/kubernetes/istio/gateway.yaml) is auto-provisioned by istiod
+  # into its own Deployment/Service once the Gateway API CRDs are installed.
