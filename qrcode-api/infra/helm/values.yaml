@@ -14,8 +14,11 @@ image:
   # Published by .github/workflows/build-qrcode-api.yml to GHCR; override per-environment.
   # Package visibility is public, so no imagePullSecrets are required to pull it.
   repository: ghcr.io/wallanaq/k8s-deployment-strategy/qrcode-api
-  # This sets the pull policy for images.
-  pullPolicy: IfNotPresent
+  # "latest" is a mutable tag -- IfNotPresent would let a node keep serving a
+  # stale cached image forever once any image exists locally under that tag,
+  # even across "kubectl rollout restart". Always ensures each new push is
+  # actually picked up.
+  pullPolicy: Always
   # The chart's default tag fallback is .Chart.AppVersion ("0.0.1"), but the
   # build workflow (.github/workflows/build-qrcode-api.yml) tags images with
   # short-SHA and "latest", not semver -- so an explicit tag is required here.
@@ -58,29 +61,25 @@ securityContext:
 
 # Environment variables for the Spring datasource (see application.yaml).
 # DB_HOST/DB_PORT point at the plain-manifest Postgres Service in
-# qrcode-api/infra/postgres/ (installed via "make install-postgres").
-# Username/password/db name are read from the same Secret Postgres itself
-# bootstraps from (qrcode-api-postgres-credentials), so the two never drift.
+# infra/kubernetes/postgres/ (installed via "make install-postgres"), which
+# runs in its own "postgres" namespace, separate from qrcode-api's -- hence
+# the cross-namespace Service DNS name below.
+# DB_NAME/DB_USERNAME/DB_PASSWORD are plain values, not a secretKeyRef:
+# Kubernetes Secrets can't be referenced across namespaces, and Postgres's
+# own credentials Secret now lives in "postgres", not "qrcode-api". These
+# must match the POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB Makefile
+# defaults that seed that Secret (see "create-postgres-secret").
 env:
   - name: DB_HOST
-    value: qrcode-api-postgres.qrcode-api.svc.cluster.local
+    value: qrcode-api-postgres.postgres.svc.cluster.local
   - name: DB_PORT
     value: "5432"
   - name: DB_NAME
-    valueFrom:
-      secretKeyRef:
-        name: qrcode-api-postgres-credentials
-        key: POSTGRES_DB
+    value: pix_qrcode
   - name: DB_USERNAME
-    valueFrom:
-      secretKeyRef:
-        name: qrcode-api-postgres-credentials
-        key: POSTGRES_USER
+    value: qrcode_api
   - name: DB_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: qrcode-api-postgres-credentials
-        key: POSTGRES_PASSWORD
+    value: qrcode_api
 
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:
@@ -138,7 +137,7 @@ readinessProbe:
 autoscaling:
   enabled: false
   minReplicas: 1
-  maxReplicas: 100
+  maxReplicas: 10
   targetCPUUtilizationPercentage: 80
   # targetMemoryUtilizationPercentage: 80
 

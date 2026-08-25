@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: qrcode-api-postgres
-  namespace: qrcode-api
+  namespace: postgres
   labels:
     app: qrcode-api-postgres
 spec:

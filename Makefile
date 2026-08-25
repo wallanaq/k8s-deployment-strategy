@@ -16,29 +16,24 @@ CHART_DIR      ?= charts/base-webapp
 CHART_DIST_DIR ?= dist
 
 # ------------------------------------------------------------------------------
-# qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)
+# Postgres (standalone infra capability, currently qrcode-api's only consumer)
 # ------------------------------------------------------------------------------
-QRCODE_API_NAMESPACE ?= qrcode-api
-QRCODE_API_RELEASE   ?= qrcode-api
-QRCODE_API_VALUES    ?= qrcode-api/infra/helm/values.yaml
-POSTGRES_DIR          ?= qrcode-api/infra/postgres
-
-# GHCR image-pull Secret. Not needed today -- the qrcode-api package is public --
-# kept for the day a package on this registry goes private again.
-GHCR_REGISTRY         ?= ghcr.io
-GHCR_PULL_SECRET_NAME ?= ghcr-pull-secret
-GHCR_USERNAME         ?=
-GHCR_TOKEN            ?=
-
-# Postgres credentials (qrcode-api's dependency, not the Harbor admin account).
+POSTGRES_NAMESPACE   ?= postgres
+POSTGRES_DIR         ?= infra/kubernetes/postgres
 POSTGRES_SECRET_NAME ?= qrcode-api-postgres-credentials
 POSTGRES_USER        ?= qrcode_api
 POSTGRES_PASSWORD    ?= qrcode_api
 POSTGRES_DB          ?= pix_qrcode
 
-.PHONY: help istio harbor harbor-chart-project package-chart publish-chart \
-	cluster create-ghcr-pull-secret create-postgres-secret install-postgres \
-	test-deploy-qrcode-api
+# ------------------------------------------------------------------------------
+# qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)
+# ------------------------------------------------------------------------------
+QRCODE_API_NAMESPACE ?= qrcode-api
+QRCODE_API_RELEASE   ?= qrcode-api
+QRCODE_API_VALUES    ?= qrcode-api/infra/helm/values.yaml
+
+.PHONY: help infra istio harbor postgres harbor-chart-project package-chart publish-chart \
+	cluster test-deploy-qrcode-api
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -47,6 +42,8 @@ help: ## Show this help message
 # ------------------------------------------------------------------------------
 # Install
 # ------------------------------------------------------------------------------
+
+infra: istio harbor postgres ## Install all local infra (Istio, Harbor, Postgres) in one go (idempotent)
 
 istio: ## Install Istio and the shared *.k8s.orb.local Gateway (idempotent)
 	@echo "==> Installing Gateway API CRDs..."
@@ -64,24 +61,45 @@ istio: ## Install Istio and the shared *.k8s.orb.local Gateway (idempotent)
 	@echo "==> Istio ingress gateway is up. Service:"
 	@kubectl get svc istio-gateway-istio --namespace $(ISTIO_NAMESPACE)
 
-harbor: ## Install Harbor (OCI registry, plain HTTP) at http://harbor.k8s.orb.local (idempotent)
+harbor: ## Install Harbor (OCI registry, plain HTTP) at http://harbor.k8s.orb.local via the shared Gateway (idempotent)
 	@echo "==> Adding/updating the Harbor Helm repo..."
 	@helm repo add harbor https://helm.goharbor.io >/dev/null 2>&1 || true
 	@helm repo update harbor >/dev/null
 	@echo "==> Creating $(HARBOR_NAMESPACE) namespace..."
 	@kubectl create namespace $(HARBOR_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@echo "==> Installing/upgrading Harbor via Helm..."
-	@echo "    Exposed as a LoadBalancer Service named 'harbor', which OrbStack resolves at"
-	@echo "    http://$(HARBOR_HOST) automatically -- no Ingress/Gateway needed."
+	@echo "    Exposed as a ClusterIP Service named 'harbor', reached via an HTTPRoute on the"
+	@echo "    shared istio-gateway at http://$(HARBOR_HOST) -- not its own LoadBalancer. A"
+	@echo "    single-node cluster only has one host port 80 to hand out via k3s's ServiceLB,"
+	@echo "    and qrcode-api's Gateway needs it too; only one LoadBalancer:80 can ever bind."
 	@helm upgrade --install harbor harbor/harbor \
 		--namespace $(HARBOR_NAMESPACE) \
-		--set expose.type=loadBalancer \
-		--set expose.loadBalancer.name=harbor \
+		--set expose.type=clusterIP \
+		--set expose.clusterIP.name=harbor \
 		--set expose.tls.enabled=false \
 		--set externalURL=http://$(HARBOR_HOST) \
 		--set harborAdminPassword=$(HARBOR_ADMIN_PASSWORD) \
 		--wait --timeout 10m
+	@echo "==> Applying Harbor's HTTPRoute on the shared Gateway..."
+	@kubectl apply -k infra/kubernetes/harbor
 	@echo "==> Harbor is up at http://$(HARBOR_HOST) (user: admin)"
+
+postgres: ## Install Postgres (plain manifests, PVC-backed) for qrcode-api in its own namespace (idempotent)
+	@echo "==> Creating $(POSTGRES_NAMESPACE) namespace..."
+	@kubectl create namespace $(POSTGRES_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Creating/updating the Postgres credentials Secret..."
+	@kubectl create secret generic $(POSTGRES_SECRET_NAME) \
+		--namespace $(POSTGRES_NAMESPACE) \
+		--from-literal=POSTGRES_USER=$(POSTGRES_USER) \
+		--from-literal=POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+		--from-literal=POSTGRES_DB=$(POSTGRES_DB) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Applying Postgres manifests from $(POSTGRES_DIR)..."
+	@kubectl apply -f $(POSTGRES_DIR)
+	@echo "==> Waiting for qrcode-api-postgres to become available..."
+	@kubectl rollout status deployment/qrcode-api-postgres \
+		--namespace $(POSTGRES_NAMESPACE) --timeout=180s
+	@echo "==> Postgres is up in namespace $(POSTGRES_NAMESPACE)."
 
 # ------------------------------------------------------------------------------
 # Helm chart publishing (base-webapp -> Harbor OCI, local/manual step)
@@ -133,34 +151,7 @@ cluster: ## Ensure the qrcode-api namespace exists and is onboarded to the Istio
 	@kubectl create namespace $(QRCODE_API_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl label namespace $(QRCODE_API_NAMESPACE) istio.io/dataplane-mode=ambient --overwrite
 
-create-ghcr-pull-secret: cluster ## Create/update a GHCR image-pull Secret (only needed if a GHCR package goes private)
-	@if [ -z "$(GHCR_USERNAME)" ] || [ -z "$(GHCR_TOKEN)" ]; then \
-		echo "GHCR_USERNAME and GHCR_TOKEN (a PAT with read:packages) must be set to create this secret."; \
-		exit 1; \
-	fi
-	@kubectl create secret docker-registry $(GHCR_PULL_SECRET_NAME) \
-		--namespace $(QRCODE_API_NAMESPACE) \
-		--docker-server=$(GHCR_REGISTRY) \
-		--docker-username=$(GHCR_USERNAME) \
-		--docker-password=$(GHCR_TOKEN) \
-		--dry-run=client -o yaml | kubectl apply -f -
-
-create-postgres-secret: cluster ## Create/update the qrcode-api Postgres credentials Secret (idempotent)
-	@kubectl create secret generic $(POSTGRES_SECRET_NAME) \
-		--namespace $(QRCODE_API_NAMESPACE) \
-		--from-literal=POSTGRES_USER=$(POSTGRES_USER) \
-		--from-literal=POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
-		--from-literal=POSTGRES_DB=$(POSTGRES_DB) \
-		--dry-run=client -o yaml | kubectl apply -f -
-
-install-postgres: cluster create-postgres-secret ## Deploy plain-manifest, PVC-backed Postgres for qrcode-api (idempotent)
-	@echo "==> Applying Postgres manifests from $(POSTGRES_DIR)..."
-	@kubectl apply -f $(POSTGRES_DIR)
-	@echo "==> Waiting for qrcode-api-postgres to become available..."
-	@kubectl rollout status deployment/qrcode-api-postgres \
-		--namespace $(QRCODE_API_NAMESPACE) --timeout=180s
-
-test-deploy-qrcode-api: cluster install-postgres ## Deploy qrcode-api (base-webapp chart) to the local cluster for smoke-testing
+test-deploy-qrcode-api: cluster postgres ## Deploy qrcode-api (base-webapp chart) to the local cluster for smoke-testing
 	@echo "==> Installing/upgrading the qrcode-api release..."
 	@helm upgrade --install $(QRCODE_API_RELEASE) $(CHART_DIR) \
 		--namespace $(QRCODE_API_NAMESPACE) \
