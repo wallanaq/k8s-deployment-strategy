@@ -33,6 +33,18 @@ POSTGRES_PASSWORD    ?=
 POSTGRES_DB          ?= pix_qrcode
 
 # ------------------------------------------------------------------------------
+# Forgejo
+# ------------------------------------------------------------------------------
+FORGEJO_NAMESPACE ?= forgejo
+FORGEJO_HOST      ?= forgejo.k8s.orb.local
+
+# ------------------------------------------------------------------------------
+# Argo CD
+# ------------------------------------------------------------------------------
+ARGOCD_NAMESPACE ?= argocd
+ARGOCD_HOST      ?= argocd.k8s.orb.local
+
+# ------------------------------------------------------------------------------
 # qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)
 # ------------------------------------------------------------------------------
 QRCODE_API_NAMESPACE      ?= qrcode-api
@@ -40,8 +52,8 @@ QRCODE_API_RELEASE        ?= qrcode-api
 QRCODE_API_VALUES         ?= qrcode-api/infra/helm/values.yaml
 QRCODE_API_DB_SECRET_NAME ?= qrcode-api-db-credentials
 
-.PHONY: help infra istio harbor postgres harbor-chart-project package-chart publish-chart \
-	cluster create-qrcode-api-db-secret test-deploy-qrcode-api
+.PHONY: help infra istio harbor postgres forgejo argocd harbor-chart-project \
+	package-chart publish-chart cluster create-qrcode-api-db-secret test-deploy-qrcode-api
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -116,6 +128,44 @@ postgres: ## Install Postgres (plain manifests, PVC-backed) for qrcode-api in it
 	@kubectl rollout status deployment/qrcode-api-postgres \
 		--namespace $(POSTGRES_NAMESPACE) --timeout=180s
 	@echo "==> Postgres is up in namespace $(POSTGRES_NAMESPACE)."
+
+forgejo: ## Install Forgejo (Git hosting) at http://$(FORGEJO_HOST) via the shared Gateway (idempotent)
+	@echo "==> Creating $(FORGEJO_NAMESPACE) namespace..."
+	@kubectl create namespace $(FORGEJO_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Installing/upgrading Forgejo via Helm..."
+	@echo "    Exposed as a ClusterIP Service ('forgejo-http'), reached via an HTTPRoute on the"
+	@echo "    shared istio-gateway at http://$(FORGEJO_HOST) -- not its own LoadBalancer, for the"
+	@echo "    same port-80 scheduling conflict reason noted by the harbor target above."
+	@helm upgrade --install forgejo oci://code.forgejo.org/forgejo-helm/forgejo \
+		--namespace $(FORGEJO_NAMESPACE) \
+		--set service.http.type=ClusterIP \
+		--wait --timeout 10m
+	@echo "==> Applying Forgejo's HTTPRoute on the shared Gateway..."
+	@kubectl apply -k infra/kubernetes/forgejo
+	@echo "==> Waiting for the forgejo deployment to become available..."
+	@kubectl rollout status deployment/forgejo \
+		--namespace $(FORGEJO_NAMESPACE) --timeout=300s
+	@echo "==> Forgejo is up at http://$(FORGEJO_HOST)"
+
+argocd: ## Install Argo CD (GitOps controller) at http://$(ARGOCD_HOST) via the shared Gateway (idempotent)
+	@echo "==> Creating $(ARGOCD_NAMESPACE) namespace..."
+	@kubectl create namespace $(ARGOCD_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Installing/upgrading Argo CD via Helm..."
+	@echo "    Server runs in insecure/plain-HTTP mode (configs.params.\"server.insecure\") since it"
+	@echo "    sits behind the same TLS-less Gateway as everything else in this cluster. Exposed as"
+	@echo "    a ClusterIP Service ('argocd-server'), reached via an HTTPRoute -- not its own"
+	@echo "    LoadBalancer, for the same port-80 scheduling conflict reason noted by harbor above."
+	@helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd \
+		--namespace $(ARGOCD_NAMESPACE) \
+		--set 'configs.params.server\.insecure=true' \
+		--wait --timeout 10m
+	@echo "==> Applying Argo CD's HTTPRoute on the shared Gateway..."
+	@kubectl apply -k infra/kubernetes/argocd
+	@echo "==> Waiting for the argocd-server deployment to become available..."
+	@kubectl rollout status deployment/argocd-server \
+		--namespace $(ARGOCD_NAMESPACE) --timeout=300s
+	@echo "==> Argo CD is up at http://$(ARGOCD_HOST) (user: admin)"
+	@echo "    Initial password: kubectl -n $(ARGOCD_NAMESPACE) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 
 # ------------------------------------------------------------------------------
 # Helm chart publishing (base-webapp -> Harbor OCI, local/manual step)
