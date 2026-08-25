@@ -111,6 +111,28 @@ httpRoute:
   #     - name: version
   #       value: v2
 
+# -- Istio mTLS for this workload.
+# Requires Istio in the namespace (ambient or sidecar). In ambient mode
+# traffic is already encrypted at L4 by ztunnel; "enabled" below just makes
+# plaintext connections rejected outright instead of merely tolerated.
+mtls:
+  # Enforce strict mTLS via a PeerAuthentication.
+  enabled: false
+  # STRICT rejects plaintext; PERMISSIVE accepts both mTLS and plaintext.
+  mode: STRICT
+  # Restrict which callers may reach this workload via an Istio
+  # AuthorizationPolicy, rendered as action: DENY + source.notPrincipals --
+  # only the SPIFFE principals listed here are allowed through, e.g.
+  # "cluster.local/ns/qrcode-api/sa/some-other-app". Only takes effect
+  # when "enabled" above is also true: notPrincipals matches against
+  # source.principal, which is only populated by an actual mTLS handshake.
+  # With mTLS not enforced (or PERMISSIVE), a plaintext caller has no
+  # principal at all, and Istio's evaluation of notPrincipals against an
+  # empty principal is exactly the kind of edge case this chart avoids by
+  # requiring both fields together, rather than silently creating a policy
+  # that looks like it restricts access but may not reliably do so.
+  allowedPrincipals: []
+
 resources: {}
   # We usually recommend not to specify default resources and to leave this as a conscious
   # choice for the user. This also increases chances charts run on environments with little
