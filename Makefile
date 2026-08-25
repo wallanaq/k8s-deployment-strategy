@@ -10,7 +10,10 @@ GATEWAY_API_CRDS_URL  ?= https://github.com/kubernetes-sigs/gateway-api/releases
 HARBOR_NAMESPACE        ?= harbor
 HARBOR_HOST             ?= harbor.k8s.orb.local
 HARBOR_CHARTS_PROJECT   ?= charts
-HARBOR_ADMIN_PASSWORD   ?= Harbor12345
+# No default on purpose -- a real value here would be a plaintext credential
+# committed to git. Pass it on the command line or export it in your shell,
+# e.g. `HARBOR_ADMIN_PASSWORD=... make harbor`.
+HARBOR_ADMIN_PASSWORD   ?=
 
 CHART_DIR      ?= charts/base-webapp
 CHART_DIST_DIR ?= dist
@@ -22,18 +25,23 @@ POSTGRES_NAMESPACE   ?= postgres
 POSTGRES_DIR         ?= infra/kubernetes/postgres
 POSTGRES_SECRET_NAME ?= qrcode-api-postgres-credentials
 POSTGRES_USER        ?= qrcode_api
-POSTGRES_PASSWORD    ?= qrcode_api
+# No default on purpose -- a real value here would be a plaintext credential
+# committed to git. Pass it on the command line or export it in your shell,
+# e.g. `POSTGRES_PASSWORD=... make postgres`. Must match whatever the live
+# Postgres role's password actually is (see "ALTER ROLE" if rotating it).
+POSTGRES_PASSWORD    ?=
 POSTGRES_DB          ?= pix_qrcode
 
 # ------------------------------------------------------------------------------
 # qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)
 # ------------------------------------------------------------------------------
-QRCODE_API_NAMESPACE ?= qrcode-api
-QRCODE_API_RELEASE   ?= qrcode-api
-QRCODE_API_VALUES    ?= qrcode-api/infra/helm/values.yaml
+QRCODE_API_NAMESPACE      ?= qrcode-api
+QRCODE_API_RELEASE        ?= qrcode-api
+QRCODE_API_VALUES         ?= qrcode-api/infra/helm/values.yaml
+QRCODE_API_DB_SECRET_NAME ?= qrcode-api-db-credentials
 
 .PHONY: help infra istio harbor postgres harbor-chart-project package-chart publish-chart \
-	cluster test-deploy-qrcode-api
+	cluster create-qrcode-api-db-secret test-deploy-qrcode-api
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -62,6 +70,10 @@ istio: ## Install Istio and the shared *.k8s.orb.local Gateway (idempotent)
 	@kubectl get svc istio-gateway-istio --namespace $(ISTIO_NAMESPACE)
 
 harbor: ## Install Harbor (OCI registry, plain HTTP) at http://harbor.k8s.orb.local via the shared Gateway (idempotent)
+	@if [ -z "$(HARBOR_ADMIN_PASSWORD)" ]; then \
+		echo "HARBOR_ADMIN_PASSWORD must be set (no default -- see the comment by its declaration)."; \
+		exit 1; \
+	fi
 	@echo "==> Adding/updating the Harbor Helm repo..."
 	@helm repo add harbor https://helm.goharbor.io >/dev/null 2>&1 || true
 	@helm repo update harbor >/dev/null
@@ -85,6 +97,10 @@ harbor: ## Install Harbor (OCI registry, plain HTTP) at http://harbor.k8s.orb.lo
 	@echo "==> Harbor is up at http://$(HARBOR_HOST) (user: admin)"
 
 postgres: ## Install Postgres (plain manifests, PVC-backed) for qrcode-api in its own namespace (idempotent)
+	@if [ -z "$(POSTGRES_PASSWORD)" ]; then \
+		echo "POSTGRES_PASSWORD must be set (no default -- see the comment by its declaration)."; \
+		exit 1; \
+	fi
 	@echo "==> Creating $(POSTGRES_NAMESPACE) namespace..."
 	@kubectl create namespace $(POSTGRES_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@echo "==> Creating/updating the Postgres credentials Secret..."
@@ -151,7 +167,21 @@ cluster: ## Ensure the qrcode-api namespace exists and is onboarded to the Istio
 	@kubectl create namespace $(QRCODE_API_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@kubectl label namespace $(QRCODE_API_NAMESPACE) istio.io/dataplane-mode=ambient --overwrite
 
-test-deploy-qrcode-api: cluster postgres ## Deploy qrcode-api (base-webapp chart) to the local cluster for smoke-testing
+# Kubernetes Secrets are namespace-scoped: qrcode-api's pod (namespace
+# qrcode-api) can't reference the Postgres Secret living in namespace
+# postgres, so it needs its own copy of the same credential here.
+create-qrcode-api-db-secret: cluster ## Create/update qrcode-api's own DB credentials Secret, mirroring Postgres's (idempotent)
+	@if [ -z "$(POSTGRES_PASSWORD)" ]; then \
+		echo "POSTGRES_PASSWORD must be set (same value used by 'make postgres')."; \
+		exit 1; \
+	fi
+	@kubectl create secret generic $(QRCODE_API_DB_SECRET_NAME) \
+		--namespace $(QRCODE_API_NAMESPACE) \
+		--from-literal=DB_USERNAME=$(POSTGRES_USER) \
+		--from-literal=DB_PASSWORD=$(POSTGRES_PASSWORD) \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+test-deploy-qrcode-api: cluster postgres create-qrcode-api-db-secret ## Deploy qrcode-api (base-webapp chart) to the local cluster for smoke-testing
 	@echo "==> Installing/upgrading the qrcode-api release..."
 	@helm upgrade --install $(QRCODE_API_RELEASE) $(CHART_DIR) \
 		--namespace $(QRCODE_API_NAMESPACE) \

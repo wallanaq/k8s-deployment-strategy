@@ -61,6 +61,12 @@ env: []
   # - name: SOME_ENV_VAR
   #   value: some-value
 
+# Name of an existing Secret whose keys are all injected as env vars via
+# envFrom. Empty by default -- the chart doesn't require a Secret to exist
+# unless a consuming values file sets this. Use this for credentials;
+# keep non-sensitive connection metadata in "env" above instead.
+secretName: ""
+
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:
   # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types

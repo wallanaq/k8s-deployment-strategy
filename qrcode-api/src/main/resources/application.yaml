@@ -4,7 +4,7 @@ spring:
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:pix_qrcode}
     username: ${DB_USERNAME:qrcode_api}
-    password: ${DB_PASSWORD:qrcode_api}
+    password: ${DB_PASSWORD:local-dev-only}
   jpa:
     open-in-view: false
     hibernate:

@@ -4,7 +4,7 @@ services:
     container_name: qrcode-api-postgres
     environment:
       POSTGRES_USER: ${DB_USERNAME:-qrcode_api}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-qrcode_api}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-local-dev-only}
       POSTGRES_DB: pix_qrcode
     ports:
       - "5432:5432"

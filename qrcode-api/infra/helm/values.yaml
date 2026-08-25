@@ -59,16 +59,11 @@ securityContext:
     drop:
       - ALL
 
-# Environment variables for the Spring datasource (see application.yaml).
-# DB_HOST/DB_PORT point at the plain-manifest Postgres Service in
-# infra/kubernetes/postgres/ (installed via "make install-postgres"), which
-# runs in its own "postgres" namespace, separate from qrcode-api's -- hence
-# the cross-namespace Service DNS name below.
-# DB_NAME/DB_USERNAME/DB_PASSWORD are plain values, not a secretKeyRef:
-# Kubernetes Secrets can't be referenced across namespaces, and Postgres's
-# own credentials Secret now lives in "postgres", not "qrcode-api". These
-# must match the POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB Makefile
-# defaults that seed that Secret (see "create-postgres-secret").
+# Connection metadata for the Spring datasource (see application.yaml).
+# Not secret -- host/port/db name, no credentials. DB_HOST points at the
+# plain-manifest Postgres Service in infra/kubernetes/postgres/ (installed
+# via "make postgres"), which runs in its own "postgres" namespace,
+# separate from qrcode-api's -- hence the cross-namespace Service DNS name.
 env:
   - name: DB_HOST
     value: qrcode-api-postgres.postgres.svc.cluster.local
@@ -76,10 +71,13 @@ env:
     value: "5432"
   - name: DB_NAME
     value: pix_qrcode
-  - name: DB_USERNAME
-    value: qrcode_api
-  - name: DB_PASSWORD
-    value: qrcode_api
+
+# DB_USERNAME/DB_PASSWORD come from this Secret instead of "env" above --
+# credentials don't belong in a values file. Created imperatively via
+# "make create-qrcode-api-db-secret" (same POSTGRES_USER/POSTGRES_PASSWORD
+# used to seed Postgres's own credentials Secret in "make postgres"),
+# never committed as YAML with real values.
+secretName: qrcode-api-db-credentials
 
 # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
 service:
