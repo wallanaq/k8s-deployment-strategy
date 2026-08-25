@@ -74,7 +74,7 @@ env:
 
 # DB_USERNAME/DB_PASSWORD come from this Secret instead of "env" above --
 # credentials don't belong in a values file. Created imperatively via
-# "make create-qrcode-api-db-secret" (same POSTGRES_USER/POSTGRES_PASSWORD
+# "make qrcode-api" (same POSTGRES_USER/POSTGRES_PASSWORD
 # used to seed Postgres's own credentials Secret in "make postgres"),
 # never committed as YAML with real values.
 secretName: qrcode-api-db-credentials

@@ -1,4 +1,5 @@
-@host = http://localhost:8080
+# @host = http://localhost:8080
+@host = http://qrcode-api.k8s.orb.local
 
 ### Create QrCode
 # @name qrcode
