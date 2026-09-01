@@ -7,6 +7,7 @@ public record PixQrCodeResponse(
         UUID id,
         String payload,
         String qrCodeBase64,
-        Instant criadoEm
+        Instant criadoEm,
+        Instant cancelledAt
 ) {
 }

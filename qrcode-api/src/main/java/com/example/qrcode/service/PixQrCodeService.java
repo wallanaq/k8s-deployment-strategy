@@ -56,9 +56,24 @@ public class PixQrCodeService {
         return toResponse(entity);
     }
 
+    /**
+     * Logical deletion: sets cancelledAt instead of removing the row, so the
+     * record survives for audit/reconciliation. Idempotent -- cancelling an
+     * already-cancelled QR code is not an error; it just returns the
+     * existing cancelled state (entity.cancel() is itself a no-op once
+     * cancelledAt is set), so a retried request never fails.
+     */
+    @Transactional
+    public PixQrCodeResponse cancel(UUID id) {
+        PixQrCode entity = repository.findById(id).orElseThrow(() -> new PixQrCodeNotFoundException(id));
+        entity.cancel();
+        PixQrCode saved = repository.save(entity);
+        return toResponse(saved);
+    }
+
     private PixQrCodeResponse toResponse(PixQrCode entity) {
         byte[] png = qrCodeGenerator.generatePng(entity.getPayload());
         String qrCodeBase64 = "data:image/png;base64," + Base64.getEncoder().encodeToString(png);
-        return new PixQrCodeResponse(entity.getId(), entity.getPayload(), qrCodeBase64, entity.getCriadoEm());
+        return new PixQrCodeResponse(entity.getId(), entity.getPayload(), qrCodeBase64, entity.getCriadoEm(), entity.getCancelledAt());
     }
 }

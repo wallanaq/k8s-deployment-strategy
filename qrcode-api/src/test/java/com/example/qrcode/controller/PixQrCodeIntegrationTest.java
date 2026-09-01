@@ -18,6 +18,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import java.math.BigDecimal;
 import java.util.Base64;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,6 +60,7 @@ class PixQrCodeIntegrationTest {
         assertThat(body.payload()).contains("br.gov.bcb.pix").isNotBlank();
         assertThat(body.qrCodeBase64()).startsWith("data:image/png;base64,");
         assertThat(body.criadoEm()).isNotNull();
+        assertThat(body.cancelledAt()).isNull();
 
         byte[] png = Base64.getDecoder().decode(body.qrCodeBase64().substring("data:image/png;base64,".length()));
         assertThat(png.length).isGreaterThan(0);
@@ -106,5 +108,72 @@ class PixQrCodeIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody()).contains("id").contains("nao-e-um-uuid");
+    }
+
+    @Test
+    void cancelSetsAndReturnsCancelledAt() {
+        UUID id = createQrCode();
+
+        ResponseEntity<PixQrCodeResponse> response = restTemplate.postForEntity(
+                "/api/pix/qrcodes/" + id + "/cancel", null, PixQrCodeResponse.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().id()).isEqualTo(id);
+        assertThat(response.getBody().cancelledAt()).isNotNull();
+
+        Optional<com.example.qrcode.entity.PixQrCode> saved = repository.findById(id);
+        assertThat(saved).isPresent();
+        assertThat(saved.get().getCancelledAt()).isNotNull();
+        assertThat(saved.get().isCancelled()).isTrue();
+    }
+
+    @Test
+    void cancelIsIdempotent() {
+        UUID id = createQrCode();
+
+        ResponseEntity<PixQrCodeResponse> first = restTemplate.postForEntity(
+                "/api/pix/qrcodes/" + id + "/cancel", null, PixQrCodeResponse.class);
+        ResponseEntity<PixQrCodeResponse> second = restTemplate.postForEntity(
+                "/api/pix/qrcodes/" + id + "/cancel", null, PixQrCodeResponse.class);
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(first.getBody()).isNotNull();
+        assertThat(second.getBody()).isNotNull();
+        assertThat(second.getBody().cancelledAt()).isEqualTo(first.getBody().cancelledAt());
+    }
+
+    @Test
+    void cancelNonexistentIdReturnsNotFound() {
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/pix/qrcodes/" + UUID.randomUUID() + "/cancel", null, String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void getByIdOnCancelledQrCodeStillReturnsItWithCancelledStatus() {
+        UUID id = createQrCode();
+        restTemplate.postForEntity("/api/pix/qrcodes/" + id + "/cancel", null, PixQrCodeResponse.class);
+
+        ResponseEntity<PixQrCodeResponse> fetched = restTemplate.getForEntity(
+                "/api/pix/qrcodes/" + id, PixQrCodeResponse.class);
+
+        assertThat(fetched.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(fetched.getBody()).isNotNull();
+        assertThat(fetched.getBody().id()).isEqualTo(id);
+        assertThat(fetched.getBody().cancelledAt()).isNotNull();
+    }
+
+    private UUID createQrCode() {
+        PixQrCodeRequest request = new PixQrCodeRequest(
+                "chave@pix.com", "Nome Teste", "Cidade Teste", null, null, null);
+
+        ResponseEntity<PixQrCodeResponse> created = restTemplate.postForEntity(
+                "/api/pix/qrcodes", request, PixQrCodeResponse.class);
+        assertThat(created.getBody()).isNotNull();
+
+        return created.getBody().id();
     }
 }

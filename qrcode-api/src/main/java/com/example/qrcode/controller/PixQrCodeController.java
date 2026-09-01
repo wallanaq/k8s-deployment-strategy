@@ -42,4 +42,15 @@ public class PixQrCodeController {
     public ResponseEntity<PixQrCodeResponse> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(service.findById(id));
     }
+
+    // POST, not DELETE: the resource still exists and stays queryable after
+    // cancellation, just marked as such -- a DELETE verb would imply the
+    // resource ceases to exist from the client's perspective, which isn't
+    // what happens here. Idempotent: cancelling an already-cancelled QR
+    // code returns 200 with its current state, not a 409 -- a retried
+    // request shouldn't be treated as a client error.
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<PixQrCodeResponse> cancel(@PathVariable UUID id) {
+        return ResponseEntity.ok(service.cancel(id));
+    }
 }

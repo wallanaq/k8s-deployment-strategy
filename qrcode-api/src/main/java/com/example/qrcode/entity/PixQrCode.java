@@ -44,6 +44,13 @@ public class PixQrCode {
     @Column(name = "criado_em", nullable = false, updatable = false)
     private Instant criadoEm;
 
+    // Logical deletion, not a physical DELETE FROM -- this is a payment
+    // system and the historical record needs to survive cancellation for
+    // audit/reconciliation. NULL means active; a non-null value means
+    // cancelled and records when.
+    @Column(name = "cancelled_at")
+    private Instant cancelledAt;
+
     protected PixQrCode() {
     }
 
@@ -134,5 +141,28 @@ public class PixQrCode {
 
     public void setCriadoEm(Instant criadoEm) {
         this.criadoEm = criadoEm;
+    }
+
+    public Instant getCancelledAt() {
+        return cancelledAt;
+    }
+
+    public void setCancelledAt(Instant cancelledAt) {
+        this.cancelledAt = cancelledAt;
+    }
+
+    public boolean isCancelled() {
+        return cancelledAt != null;
+    }
+
+    /**
+     * Marks this QR code as cancelled at the current instant. Idempotent:
+     * calling this on an already-cancelled QR code is a no-op, so a retried
+     * cancel request never overwrites the original cancellation timestamp.
+     */
+    public void cancel() {
+        if (cancelledAt == null) {
+            cancelledAt = Instant.now();
+        }
     }
 }
