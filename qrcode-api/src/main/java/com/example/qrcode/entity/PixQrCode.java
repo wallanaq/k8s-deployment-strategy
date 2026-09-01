@@ -10,6 +10,7 @@ import jakarta.persistence.Table;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 @Entity
@@ -67,7 +68,14 @@ public class PixQrCode {
     @PrePersist
     void prePersist() {
         if (criadoEm == null) {
-            criadoEm = Instant.now();
+            // Truncated to microseconds: TIMESTAMPTZ only stores microsecond
+            // precision, so an untruncated Instant.now() (nanosecond
+            // resolution on some JVMs/OSes, e.g. Linux) would silently lose
+            // precision on the round trip through Postgres. Truncating here
+            // means the in-memory value already matches what gets persisted,
+            // so a response returned right after a write is never out of
+            // sync with what a later read of the same row returns.
+            criadoEm = Instant.now().truncatedTo(ChronoUnit.MICROS);
         }
     }
 
@@ -159,10 +167,14 @@ public class PixQrCode {
      * Marks this QR code as cancelled at the current instant. Idempotent:
      * calling this on an already-cancelled QR code is a no-op, so a retried
      * cancel request never overwrites the original cancellation timestamp.
+     * Truncated to microseconds for the same reason as prePersist() above --
+     * matches TIMESTAMPTZ's actual storage precision, so the value returned
+     * in the response right after cancelling is never out of sync with what
+     * a later read of the same row returns.
      */
     public void cancel() {
         if (cancelledAt == null) {
-            cancelledAt = Instant.now();
+            cancelledAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         }
     }
 }
