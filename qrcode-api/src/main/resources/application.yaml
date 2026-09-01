@@ -12,6 +12,14 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  # In-process (Caffeine), per-Pod cache -- not shared across replicas.
+  # Accepted trade-off for now (no new infrastructure like Redis), not an
+  # oversight. QR_CODE_CACHE_TTL is a new optional env var; wiring it into
+  # a chart's values.yaml is a separate, later change.
+  cache:
+    cache-names: qrCodes
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=${QR_CODE_CACHE_TTL:5m}
   docker:
     compose:
       enabled: false

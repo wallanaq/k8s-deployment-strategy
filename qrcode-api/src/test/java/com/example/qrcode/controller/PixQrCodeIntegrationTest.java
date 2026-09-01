@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -21,6 +22,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -34,7 +37,12 @@ class PixQrCodeIntegrationTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
-    @Autowired
+    // Spy, not a plain @Autowired -- delegates to the real bean (so every
+    // existing assertion against it keeps working unchanged) while also
+    // letting the new cache tests verify how many times the repository
+    // was actually invoked, which is the only way to prove caching (and
+    // eviction) is really happening rather than just annotated.
+    @MockitoSpyBean
     private PixQrCodeRepository repository;
 
     @Test
@@ -171,6 +179,48 @@ class PixQrCodeIntegrationTest {
         assertThat(fetched.getBody()).isNotNull();
         assertThat(fetched.getBody().id()).isEqualTo(id);
         assertThat(fetched.getBody().canceladoEm()).isNotNull();
+    }
+
+    @Test
+    void repeatedGetByIdHitsRepositoryOnlyOnce() {
+        UUID id = createQrCode();
+        // The create() call above doesn't populate the "qrCodes" cache
+        // (only findById() is @Cacheable), so both GETs below are exactly
+        // what's under test.
+
+        ResponseEntity<PixQrCodeResponse> first = restTemplate.getForEntity(
+                "/api/pix/qrcodes/" + id, PixQrCodeResponse.class);
+        ResponseEntity<PixQrCodeResponse> second = restTemplate.getForEntity(
+                "/api/pix/qrcodes/" + id, PixQrCodeResponse.class);
+
+        assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getBody()).isEqualTo(first.getBody());
+        verify(repository, times(1)).findById(id);
+    }
+
+    @Test
+    void cancelEvictsTheCacheEntryForThatId() {
+        UUID id = createQrCode();
+
+        // Cache miss: populates the "qrCodes" entry for id (1st findById call).
+        restTemplate.getForEntity("/api/pix/qrcodes/" + id, PixQrCodeResponse.class);
+
+        // cancel() calls repository.findById() itself to load the entity to
+        // cancel -- that's a second, always-present call independent of the
+        // "qrCodes" cache (cancel() isn't @Cacheable). It's on top of, not
+        // instead of, the eviction being tested below.
+        restTemplate.postForEntity("/api/pix/qrcodes/" + id + "/cancel", null, PixQrCodeResponse.class);
+
+        // If eviction worked, this is a fresh cache miss (3rd findById
+        // call) rather than a stale cached "active" response.
+        ResponseEntity<PixQrCodeResponse> afterCancel = restTemplate.getForEntity(
+                "/api/pix/qrcodes/" + id, PixQrCodeResponse.class);
+
+        assertThat(afterCancel.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(afterCancel.getBody()).isNotNull();
+        assertThat(afterCancel.getBody().canceladoEm()).isNotNull();
+        verify(repository, times(3)).findById(id);
     }
 
     private UUID createQrCode() {

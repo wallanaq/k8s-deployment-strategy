@@ -5,6 +5,8 @@ import com.example.qrcode.dto.PixQrCodeResponse;
 import com.example.qrcode.entity.PixQrCode;
 import com.example.qrcode.exception.PixQrCodeNotFoundException;
 import com.example.qrcode.repository.PixQrCodeRepository;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +52,10 @@ public class PixQrCodeService {
         return toResponse(saved);
     }
 
+    // In-process (Caffeine) cache, per Pod -- not shared across replicas.
+    // Accepted trade-off for now, not an oversight: adding a shared cache
+    // (e.g. Redis) is new infrastructure, out of scope for this pass.
+    @Cacheable(value = "qrCodes", key = "#id")
     @Transactional(readOnly = true)
     public PixQrCodeResponse findById(UUID id) {
         PixQrCode entity = repository.findById(id).orElseThrow(() -> new PixQrCodeNotFoundException(id));
@@ -62,7 +68,11 @@ public class PixQrCodeService {
      * already-cancelled QR code is not an error; it just returns the
      * existing cancelled state (entity.cancel() is itself a no-op once
      * cancelledAt is set), so a retried request never fails.
+     * Evicts the "qrCodes" cache entry for this id: a cancelled QR code
+     * must not keep serving a stale "active" response from cache until
+     * TTL expiry -- correctness here matters more than cache hit rate.
      */
+    @CacheEvict(value = "qrCodes", key = "#id")
     @Transactional
     public PixQrCodeResponse cancel(UUID id) {
         PixQrCode entity = repository.findById(id).orElseThrow(() -> new PixQrCodeNotFoundException(id));
