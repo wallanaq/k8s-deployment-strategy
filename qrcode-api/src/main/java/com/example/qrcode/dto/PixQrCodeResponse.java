@@ -8,6 +8,6 @@ public record PixQrCodeResponse(
         String payload,
         String qrCodeBase64,
         Instant criadoEm,
-        Instant cancelledAt
+        Instant canceladoEm
 ) {
 }
