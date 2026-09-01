@@ -53,7 +53,7 @@ QRCODE_API_VALUES         ?= qrcode-api/infra/helm/values.yaml
 QRCODE_API_DB_SECRET_NAME ?= qrcode-api-db-credentials
 
 .PHONY: help infra istio harbor postgres forgejo argocd harbor-chart-project \
-	package-chart publish-chart qrcode-api
+	package-chart publish-chart verify-chart-published qrcode-api
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -208,6 +208,50 @@ publish-chart: package-chart harbor-chart-project ## Push the packaged base-weba
 	helm push $$chart_tgz "oci://$(HARBOR_HOST)/$(HARBOR_CHARTS_PROJECT)" \
 		--plain-http --username admin --password $(HARBOR_ADMIN_PASSWORD); \
 	echo "==> Published: oci://$(HARBOR_HOST)/$(HARBOR_CHARTS_PROJECT)/$$chart_name:$$chart_version"
+	@$(MAKE) verify-chart-published
+
+# Second time a template change has shipped without a matching Chart.yaml
+# version bump (first was the HTTPRoute/Ingress rework, 0.1.1 vs 0.2.0; this
+# one was the secretName/envFrom feature landing under the still-published
+# 0.4.0). Catches drift by re-rendering whatever Harbor has at the local
+# Chart.yaml version and diffing it against the local working tree -- if
+# someone edited templates without bumping the version, this fails loudly
+# instead of silently shipping stale behavior under an old tag.
+verify-chart-published: ## Diff local chart templates against the matching version already published in Harbor, if any (fails loudly on mismatch)
+	@if [ -z "$(HARBOR_ADMIN_PASSWORD)" ]; then \
+		echo "HARBOR_ADMIN_PASSWORD must be set (no default -- see the comment by its declaration)."; \
+		exit 1; \
+	fi
+	@chart_name=$$(basename $(CHART_DIR)); \
+	chart_version=$$(grep '^version:' $(CHART_DIR)/Chart.yaml | awk '{print $$2}'); \
+	tmp_dir=$$(mktemp -d); \
+	echo "==> Checking whether $$chart_name:$$chart_version is already published in Harbor..."; \
+	if helm pull "oci://$(HARBOR_HOST)/$(HARBOR_CHARTS_PROJECT)/$$chart_name" \
+		--version "$$chart_version" --plain-http \
+		--username admin --password $(HARBOR_ADMIN_PASSWORD) \
+		-d "$$tmp_dir" >/dev/null 2>&1; then \
+		echo "==> Found published $$chart_name:$$chart_version -- diffing rendered templates against the local working tree..."; \
+		mkdir -p "$$tmp_dir/extracted"; \
+		tar xzf "$$tmp_dir/$$chart_name-$$chart_version.tgz" -C "$$tmp_dir/extracted"; \
+		helm template "$$tmp_dir/extracted/$$chart_name" > "$$tmp_dir/published.yaml" 2>&1; \
+		helm template $(CHART_DIR) > "$$tmp_dir/local.yaml" 2>&1; \
+		if diff -u "$$tmp_dir/published.yaml" "$$tmp_dir/local.yaml" > "$$tmp_dir/diff.txt"; then \
+			echo "==> OK: published $$chart_name:$$chart_version renders identically to the local working tree."; \
+			rm -rf "$$tmp_dir"; \
+		else \
+			echo ""; \
+			echo "!! MISMATCH: Harbor's $$chart_name:$$chart_version does not render identically to the"; \
+			echo "!! local working tree at the same version. Templates were edited without bumping"; \
+			echo "!! Chart.yaml's version -- bump the version and republish."; \
+			echo ""; \
+			cat "$$tmp_dir/diff.txt"; \
+			rm -rf "$$tmp_dir"; \
+			exit 1; \
+		fi; \
+	else \
+		echo "==> $$chart_name:$$chart_version is not published in Harbor yet (expected for a pending new version) -- nothing to verify."; \
+		rm -rf "$$tmp_dir"; \
+	fi
 
 # ------------------------------------------------------------------------------
 # qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)

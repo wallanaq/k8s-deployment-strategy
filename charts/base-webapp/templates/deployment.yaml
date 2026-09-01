@@ -49,9 +49,17 @@ spec:
             - secretRef:
                 name: {{ .Values.secretName }}
           {{- end }}
-          {{- with .Values.env }}
+          {{- if or .Values.podInfo.enabled .Values.env }}
           env:
+            {{- if .Values.podInfo.enabled }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- end }}
+            {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
+            {{- end }}
           {{- end }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
