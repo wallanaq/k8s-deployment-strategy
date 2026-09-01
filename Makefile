@@ -45,6 +45,16 @@ ARGOCD_NAMESPACE ?= argocd
 ARGOCD_HOST      ?= argocd.k8s.orb.local
 
 # ------------------------------------------------------------------------------
+# Argo Rollouts
+# ------------------------------------------------------------------------------
+ARGO_ROLLOUTS_NAMESPACE ?= argo-rollouts
+# Pinned rather than "latest" -- same reasoning as GATEWAY_API_CRDS_URL above,
+# so re-running this target later doesn't silently pick up a newer, untested
+# controller version.
+ARGO_ROLLOUTS_VERSION   ?= v1.10.0
+ARGO_ROLLOUTS_INSTALL_URL ?= https://github.com/argoproj/argo-rollouts/releases/download/$(ARGO_ROLLOUTS_VERSION)/install.yaml
+
+# ------------------------------------------------------------------------------
 # qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)
 # ------------------------------------------------------------------------------
 QRCODE_API_NAMESPACE      ?= qrcode-api
@@ -52,8 +62,7 @@ QRCODE_API_RELEASE        ?= qrcode-api
 QRCODE_API_VALUES         ?= qrcode-api/infra/helm/values.yaml
 QRCODE_API_DB_SECRET_NAME ?= qrcode-api-db-credentials
 
-.PHONY: help infra istio harbor postgres forgejo argocd harbor-chart-project \
-	package-chart publish-chart verify-chart-published qrcode-api
+.PHONY: help infra istio harbor postgres forgejo argocd argo-rollouts
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -63,7 +72,7 @@ help: ## Show this help message
 # Install
 # ------------------------------------------------------------------------------
 
-infra: istio harbor postgres ## Install all local infra (Istio, Harbor, Postgres) in one go (idempotent)
+infra: istio harbor postgres forgejo argocd argo-rollouts ## Install all local infra (Istio, Harbor, Postgres, Forgejo, ArgoCD, Argo Rollouts) in one go (idempotent)
 
 istio: ## Install Istio and the shared *.k8s.orb.local Gateway (idempotent)
 	@echo "==> Installing Gateway API CRDs..."
@@ -167,6 +176,34 @@ argocd: ## Install Argo CD (GitOps controller) at http://$(ARGOCD_HOST) via the 
 	@echo "==> Argo CD is up at http://$(ARGOCD_HOST) (user: admin)"
 	@echo "    Initial password: kubectl -n $(ARGOCD_NAMESPACE) get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
 
+argo-rollouts: ## Install Argo Rollouts (controller + CRDs) with the Gateway API traffic-routing plugin (idempotent)
+	@echo "==> Creating $(ARGO_ROLLOUTS_NAMESPACE) namespace..."
+	@kubectl create namespace $(ARGO_ROLLOUTS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Installing the Argo Rollouts controller + CRDs ($(ARGO_ROLLOUTS_VERSION))..."
+	@echo "    Raw manifest, not the argo-helm chart -- the project's own docs only document"
+	@echo "    'kubectl apply -f install.yaml' as the install path; Helm isn't mentioned as an"
+	@echo "    alternative there, unlike Argo CD's docs which do point at argo-helm."
+	@echo "    --server-side because the Rollout/AnalysisRun CRDs' schemas exceed the 256KiB"
+	@echo "    last-applied-configuration annotation limit that plain client-side apply hits."
+	@kubectl apply --server-side -n $(ARGO_ROLLOUTS_NAMESPACE) -f $(ARGO_ROLLOUTS_INSTALL_URL)
+	@echo "==> Registering the Gateway API traffic-routing plugin (argoproj-labs/gatewayAPI)"
+	@echo "    and its supplemental RBAC (HTTPRoutes aren't covered by the core install)..."
+	@echo "    --server-side, and under a distinct --field-manager: argo-rollouts-config is"
+	@echo "    co-owned with the install.yaml above. Client-side apply's diff-and-strip logic"
+	@echo "    drops fields (e.g. labels) it doesn't know the other manifest declared; a shared"
+	@echo "    server-side field-manager name has the same problem (whichever applies last wins"
+	@echo "    and prunes the other's fields), so this uses its own field-manager identity."
+	@kubectl apply --server-side --field-manager=argo-rollouts-gatewayapi-plugin \
+		-k infra/kubernetes/argo-rollouts
+	@echo "==> Restarting the controller so it picks up the plugin config..."
+	@kubectl rollout restart deployment/argo-rollouts --namespace $(ARGO_ROLLOUTS_NAMESPACE)
+	@echo "==> Waiting for the argo-rollouts deployment to become available..."
+	@kubectl rollout status deployment/argo-rollouts \
+		--namespace $(ARGO_ROLLOUTS_NAMESPACE) --timeout=300s
+	@echo "==> Argo Rollouts is up in namespace $(ARGO_ROLLOUTS_NAMESPACE)."
+	@echo "    Not yet Argo CD-managed -- installed imperatively via this target, same as"
+	@echo "    every other tool in infra/kubernetes/ before its own GitOps migration."
+
 # ------------------------------------------------------------------------------
 # Helm chart publishing (base-webapp -> Harbor OCI, local/manual step)
 # ------------------------------------------------------------------------------
@@ -174,6 +211,8 @@ argocd: ## Install Argo CD (GitOps controller) at http://$(ARGOCD_HOST) via the 
 # inside the local OrbStack cluster), so this is run by hand from a machine that
 # can. Argo CD will later pull the published chart straight from Harbor
 # in-cluster; that wiring isn't built yet.
+
+.PHONY: harbor-chart-project package-chart publish-chart verify-chart-published
 
 harbor-chart-project: ## Create the Harbor "charts" project for chart artifacts (idempotent)
 	@echo "==> Checking for Harbor project '$(HARBOR_CHARTS_PROJECT)'..."
@@ -260,6 +299,8 @@ verify-chart-published: ## Diff local chart templates against the matching versi
 # Kubernetes Secrets are namespace-scoped: qrcode-api's pod (namespace
 # qrcode-api) can't reference the Postgres Secret living in namespace
 # postgres, so it needs its own copy of the same credential here.
+.PHONY: qrcode-api
+
 qrcode-api: postgres ## Deploy qrcode-api (base-webapp chart) to the local cluster for smoke-testing
 	@if [ -z "$(POSTGRES_PASSWORD)" ]; then \
 		echo "POSTGRES_PASSWORD must be set (same value used by 'make postgres')."; \

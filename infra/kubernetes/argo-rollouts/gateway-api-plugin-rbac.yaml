@@ -1,0 +1,42 @@
+# Supplemental RBAC for the argoproj-labs/gatewayAPI plugin. The core Argo
+# Rollouts install (install.yaml) grants nothing for gateway.networking.k8s.io
+# -- confirmed by grepping the official install manifest, not assumed -- so
+# without this the plugin can discover HTTPRoutes but can't patch them to
+# shift traffic weights, and Rollouts using trafficRouting.plugins would fail
+# at the routing step.
+#
+# Permissions match the plugin's own documented example exactly:
+# https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi/blob/main/docs/installation.md#permissions
+# (services:get plus get/list/update/patch on httproutes/grpcroutes/
+# tcproutes/tlsroutes -- no delete, the plugin only edits routes in place).
+#
+# Bound to the same "argo-rollouts" ServiceAccount the core install.yaml
+# creates in the argo-rollouts namespace -- the plugin runs as a subprocess
+# of the controller pod, so it acts under the controller's own identity.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argo-rollouts-gateway-api-plugin
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes", "grpcroutes"]
+    verbs: ["get", "list", "update", "patch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["tcproutes", "tlsroutes"]
+    verbs: ["get", "list", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argo-rollouts-gateway-api-plugin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argo-rollouts-gateway-api-plugin
+subjects:
+  - kind: ServiceAccount
+    name: argo-rollouts
+    namespace: argo-rollouts

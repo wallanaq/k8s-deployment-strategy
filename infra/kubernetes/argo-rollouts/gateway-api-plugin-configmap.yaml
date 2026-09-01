@@ -1,0 +1,21 @@
+# Registers the argoproj-labs/gatewayAPI traffic-routing plugin with the
+# Argo Rollouts controller, per its own install docs:
+# https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi/blob/main/docs/installation.md
+#
+# name/namespace are fixed by convention -- the controller looks specifically
+# for a ConfigMap called "argo-rollouts-config" in its own namespace.
+#
+# "location" points at a released plugin binary for the node's OS/arch (this
+# cluster's node is linux/arm64 -- confirmed via `kubectl get nodes`, not
+# assumed). The controller downloads and execs it directly, so this pins a
+# specific plugin release rather than floating on "latest" -- bump the
+# version deliberately when needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-config
+  namespace: argo-rollouts
+data:
+  trafficRouterPlugins: |-
+    - name: "argoproj-labs/gatewayAPI"
+      location: "https://github.com/argoproj-labs/rollouts-plugin-trafficrouter-gatewayapi/releases/download/v0.17.0/gatewayapi-plugin-linux-arm64"
