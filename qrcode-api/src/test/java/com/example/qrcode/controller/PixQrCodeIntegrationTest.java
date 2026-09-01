@@ -61,7 +61,7 @@ class PixQrCodeIntegrationTest {
         assertThat(body.qrCodeBase64()).startsWith("data:image/png;base64,");
         assertThat(body.criadoEm()).isNotNull();
         assertThat(body.criadoEm().getNano() % 1000).isEqualTo(0);
-        assertThat(body.cancelledAt()).isNull();
+        assertThat(body.canceladoEm()).isNull();
 
         byte[] png = Base64.getDecoder().decode(body.qrCodeBase64().substring("data:image/png;base64,".length()));
         assertThat(png.length).isGreaterThan(0);
@@ -121,13 +121,13 @@ class PixQrCodeIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().id()).isEqualTo(id);
-        assertThat(response.getBody().cancelledAt()).isNotNull();
+        assertThat(response.getBody().canceladoEm()).isNotNull();
         // TIMESTAMPTZ only stores microsecond precision; asserting this
         // directly (rather than relying on a nanosecond-precision clock to
         // expose a mismatch) is what actually catches the bug where the
         // in-memory value returned right after the write doesn't match what
         // a later read of the same row returns -- see cancelIsIdempotent.
-        assertThat(response.getBody().cancelledAt().getNano() % 1000).isEqualTo(0);
+        assertThat(response.getBody().canceladoEm().getNano() % 1000).isEqualTo(0);
 
         Optional<com.example.qrcode.entity.PixQrCode> saved = repository.findById(id);
         assertThat(saved).isPresent();
@@ -148,7 +148,7 @@ class PixQrCodeIntegrationTest {
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(first.getBody()).isNotNull();
         assertThat(second.getBody()).isNotNull();
-        assertThat(second.getBody().cancelledAt()).isEqualTo(first.getBody().cancelledAt());
+        assertThat(second.getBody().canceladoEm()).isEqualTo(first.getBody().canceladoEm());
     }
 
     @Test
@@ -170,7 +170,7 @@ class PixQrCodeIntegrationTest {
         assertThat(fetched.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(fetched.getBody()).isNotNull();
         assertThat(fetched.getBody().id()).isEqualTo(id);
-        assertThat(fetched.getBody().cancelledAt()).isNotNull();
+        assertThat(fetched.getBody().canceladoEm()).isNotNull();
     }
 
     private UUID createQrCode() {
