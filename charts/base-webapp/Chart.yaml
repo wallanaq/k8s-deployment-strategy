@@ -5,8 +5,11 @@ description: >-
   optional ServiceAccount, HTTPRoute, HorizontalPodAutoscaler, and optional
   Istio PeerAuthentication/AuthorizationPolicy for mTLS and caller
   restriction). Exposes itself via Gateway API (HTTPRoute), not a
-  Kubernetes Ingress. Not tied to any one application -- pair it with an
-  application-specific values file to deploy something concrete.
+  Kubernetes Ingress. Also supports optional canary deployments via Argo
+  Rollouts (Rollout in place of Deployment, stable/canary Services, and a
+  weighted HTTPRoute), manual-promotion only for now. Not tied to any one
+  application -- pair it with an application-specific values file to deploy
+  something concrete.
 
 # A chart can be either an 'application' or a 'library' chart.
 #
@@ -21,7 +24,7 @@ type: application
 # This is the chart version. This version number should be incremented each time you make changes
 # to the chart and its templates, including the app version.
 # Versions are expected to follow Semantic Versioning (https://semver.org/)
-version: 0.6.0
+version: 0.7.0
 
 # This is the version number of the application being deployed. This version number should be
 # incremented each time you make changes to the application. Versions are not expected to

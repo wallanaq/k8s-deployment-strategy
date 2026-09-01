@@ -173,6 +173,34 @@ readinessProbe:
     path: /
     port: http
 
+# -- Canary deployments via Argo Rollouts (must already be installed in the
+# cluster, along with its Gateway API traffic-routing plugin -- see
+# infra/kubernetes/argo-rollouts/). Off by default, same opt-in pattern as
+# mtls/podInfo above.
+#
+# When enabled, this chart renders a Rollout instead of a Deployment, a
+# stable/canary Service pair instead of one Service, and a weighted
+# HTTPRoute (100/0 at rest) instead of a single backendRef. If autoscaling
+# is also enabled, the HorizontalPodAutoscaler targets the Rollout instead
+# of the Deployment.
+#
+# Phase 1 (manual promotion) only: no AnalysisTemplate/automated analysis
+# here -- that's deferred until a metrics backend (Prometheus) exists to
+# actually query.
+rollout:
+  enabled: false
+  # Canary steps (setWeight/pause/etc.), passed through to
+  # spec.strategy.canary.steps as-is. Empty by default is intentional, not
+  # an oversight: per Argo Rollouts' own docs, an omitted/empty steps list
+  # makes the canary strategy mimic a normal rolling update (maxSurge/
+  # maxUnavailable), so "rollout.enabled: true" with no steps is a safe,
+  # low-drama default rather than a foot-gun.
+  steps: []
+  # - setWeight: 20
+  # - pause: {}
+  # - setWeight: 50
+  # - pause: {duration: 5m}
+
 # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
 autoscaling:
   enabled: false

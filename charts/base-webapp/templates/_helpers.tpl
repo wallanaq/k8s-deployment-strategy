@@ -60,3 +60,89 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Shared Pod spec (i.e. the contents of spec.template.spec), used by both
+templates/deployment.yaml (rollout.enabled: false) and templates/rollout.yaml
+(rollout.enabled: true). Deployment and Rollout need byte-identical Pod
+configuration -- containers, env/envFrom, probes, resources, volumes -- so
+this is the single source of truth for that shape, rather than maintaining
+two copies that can quietly drift apart.
+
+Callers include this immediately under their own "spec:" key at
+spec.template.spec and pipe it through "nindent 6" -- both call sites sit at
+the same nesting depth (spec.template.spec), so the same indent works for
+both. See templates/deployment.yaml and templates/rollout.yaml.
+*/}}
+{{- define "base-webapp.podSpec" -}}
+{{- with .Values.imagePullSecrets -}}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{ end -}}
+serviceAccountName: {{ include "base-webapp.serviceAccountName" . }}
+{{- with .Values.podSecurityContext }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+containers:
+  - name: {{ .Chart.Name }}
+    {{- with .Values.securityContext }}
+    securityContext:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+    imagePullPolicy: {{ .Values.image.pullPolicy }}
+    ports:
+      - name: http
+        containerPort: {{ .Values.service.port }}
+        protocol: TCP
+    {{- if .Values.secretName }}
+    envFrom:
+      - secretRef:
+          name: {{ .Values.secretName }}
+    {{- end }}
+    {{- if or .Values.podInfo.enabled .Values.env }}
+    env:
+      {{- if .Values.podInfo.enabled }}
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      {{- end }}
+      {{- with .Values.env }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.livenessProbe }}
+    livenessProbe:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.readinessProbe }}
+    readinessProbe:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.volumeMounts }}
+    volumeMounts:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+{{- with .Values.volumes }}
+volumes:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.nodeSelector }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.affinity }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.tolerations }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

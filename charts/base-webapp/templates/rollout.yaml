@@ -1,6 +1,6 @@
-{{- if not .Values.rollout.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+{{- if .Values.rollout.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: {{ include "base-webapp.fullname" . }}
   labels:
@@ -25,4 +25,17 @@ spec:
         {{- end }}
     spec:
       {{- include "base-webapp.podSpec" . | nindent 6 }}
+  strategy:
+    canary:
+      canaryService: {{ include "base-webapp.fullname" . }}-canary
+      stableService: {{ include "base-webapp.fullname" . }}-stable
+      trafficRouting:
+        plugins:
+          argoproj-labs/gatewayAPI:
+            httpRoute: {{ include "base-webapp.fullname" . }}
+            namespace: {{ .Release.Namespace }}
+      {{- if .Values.rollout.steps }}
+      steps:
+        {{- toYaml .Values.rollout.steps | nindent 8 }}
+      {{- end }}
 {{- end }}
