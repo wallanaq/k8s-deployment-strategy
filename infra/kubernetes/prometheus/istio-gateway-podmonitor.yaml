@@ -1,0 +1,37 @@
+# Scrapes the shared ingress Gateway's merged metrics endpoint. Confirmed
+# empirically (not assumed) that this is required: kube-prometheus-stack's
+# Prometheus (Prometheus Operator-managed) only scrapes targets discovered
+# via PodMonitor/ServiceMonitor CRDs, not the legacy prometheus.io/scrape
+# pod annotations Istio sets automatically -- with no PodMonitor, the
+# Gateway pod never showed up under /targets at all, despite those
+# annotations being present.
+#
+# Targets the Pod directly (not the istio-gateway-istio Service): that
+# Service only exposes ports 15021 (status) and 80 (http), not 15020
+# (metrics) -- a ServiceMonitor couldn't reach this port at all.
+#
+# Port 15020, path /stats/prometheus is Istio's own metrics-merge endpoint
+# (istio-agent's own metrics + a scrape of the Envoy admin's native stats),
+# confirmed live to expose both istio_requests_total (Istio-style, with
+# destination_service_name/response_code labels) and the raw
+# envoy_cluster_upstream_rq_* series.
+#
+# "release: prometheus" is required for kube-prometheus-stack's Prometheus
+# CR to pick this up -- its podMonitorSelector matches on that label
+# (podMonitorNamespaceSelector is empty/unrestricted, so this can live
+# here in istio-system rather than in the monitoring namespace).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: istio-gateway
+  namespace: istio-system
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: istio-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /stats/prometheus
+      interval: 15s

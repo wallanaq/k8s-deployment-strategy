@@ -55,6 +55,13 @@ ARGO_ROLLOUTS_VERSION   ?= v1.10.0
 ARGO_ROLLOUTS_INSTALL_URL ?= https://github.com/argoproj/argo-rollouts/releases/download/$(ARGO_ROLLOUTS_VERSION)/install.yaml
 
 # ------------------------------------------------------------------------------
+# Prometheus
+# ------------------------------------------------------------------------------
+MONITORING_NAMESPACE     ?= monitoring
+# Pinned rather than "latest", same reasoning as ARGO_ROLLOUTS_VERSION above.
+PROMETHEUS_CHART_VERSION ?= 88.6.2
+
+# ------------------------------------------------------------------------------
 # qrcode-api test-deploy (local smoke-test, not part of GitHub Actions)
 # ------------------------------------------------------------------------------
 QRCODE_API_NAMESPACE      ?= qrcode-api
@@ -62,7 +69,7 @@ QRCODE_API_RELEASE        ?= qrcode-api
 QRCODE_API_VALUES         ?= qrcode-api/infra/helm/values.yaml
 QRCODE_API_DB_SECRET_NAME ?= qrcode-api-db-credentials
 
-.PHONY: help infra istio harbor postgres forgejo argocd argo-rollouts
+.PHONY: help infra istio harbor postgres forgejo argocd argo-rollouts prometheus
 
 help: ## Show this help message
 	@echo "Available targets:"
@@ -72,7 +79,7 @@ help: ## Show this help message
 # Install
 # ------------------------------------------------------------------------------
 
-infra: istio harbor postgres forgejo argocd argo-rollouts ## Install all local infra (Istio, Harbor, Postgres, Forgejo, ArgoCD, Argo Rollouts) in one go (idempotent)
+infra: istio harbor postgres forgejo argocd argo-rollouts prometheus ## Install all local infra (Istio, Harbor, Postgres, Forgejo, ArgoCD, Argo Rollouts, Prometheus) in one go (idempotent)
 
 istio: ## Install Istio and the shared *.k8s.orb.local Gateway (idempotent)
 	@echo "==> Installing Gateway API CRDs..."
@@ -203,6 +210,35 @@ argo-rollouts: ## Install Argo Rollouts (controller + CRDs) with the Gateway API
 	@echo "==> Argo Rollouts is up in namespace $(ARGO_ROLLOUTS_NAMESPACE)."
 	@echo "    Not yet Argo CD-managed -- installed imperatively via this target, same as"
 	@echo "    every other tool in infra/kubernetes/ before its own GitOps migration."
+
+prometheus: ## Install Prometheus (kube-prometheus-stack, Grafana/Alertmanager disabled) and scrape the shared Gateway (idempotent)
+	@echo "==> Adding/updating the prometheus-community Helm repo..."
+	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+	@helm repo update prometheus-community >/dev/null
+	@echo "==> Creating $(MONITORING_NAMESPACE) namespace..."
+	@kubectl create namespace $(MONITORING_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	@echo "==> Installing/upgrading kube-prometheus-stack via Helm..."
+	@echo "    Grafana and Alertmanager disabled -- this pass only needs Prometheus itself to"
+	@echo "    explore/query metrics for a future Argo Rollouts AnalysisTemplate; nothing here"
+	@echo "    consumes dashboards or alerts yet. ClusterIP, no HTTPRoute -- port-forward for now"
+	@echo "    (kubectl -n $(MONITORING_NAMESPACE) port-forward svc/prometheus-kube-prometheus-prometheus 9090:9090)."
+	@helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+		--namespace $(MONITORING_NAMESPACE) \
+		--version $(PROMETHEUS_CHART_VERSION) \
+		--set grafana.enabled=false \
+		--set alertmanager.enabled=false \
+		--set prometheus.service.type=ClusterIP \
+		--wait --timeout 10m
+	@echo "==> Applying the istio-gateway PodMonitor..."
+	@echo "    Confirmed empirically that this is required, not optional: the shared Gateway"
+	@echo "    already carries Istio's own prometheus.io/scrape annotations (metrics-merge"
+	@echo "    endpoint at :15020/stats/prometheus), but kube-prometheus-stack's Prometheus"
+	@echo "    Operator-managed Prometheus only discovers targets via PodMonitor/ServiceMonitor"
+	@echo "    CRDs -- those legacy annotations alone got nothing scraped. A PodMonitor (not"
+	@echo "    ServiceMonitor) is needed too: the Gateway's own Service doesn't expose port"
+	@echo "    15020 at all, only 15021 (status) and 80 (http)."
+	@kubectl apply -k infra/kubernetes/prometheus
+	@echo "==> Prometheus is up in namespace $(MONITORING_NAMESPACE)."
 
 # ------------------------------------------------------------------------------
 # Helm chart publishing (base-webapp -> Harbor OCI, local/manual step)
