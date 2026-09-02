@@ -184,12 +184,20 @@ readinessProbe:
 # is also enabled, the HorizontalPodAutoscaler targets the Rollout instead
 # of the Deployment.
 #
-# Phase 1 (manual promotion) only: no AnalysisTemplate/automated analysis
-# here -- that's deferred until a metrics backend (Prometheus) exists to
-# actually query.
+# Automated analysis (AnalysisTemplate) is available once a metrics backend
+# (Prometheus) is installed -- see infra/kubernetes/prometheus/ -- but this
+# chart stays app-agnostic and doesn't template an AnalysisTemplate itself:
+# what counts as "successful" is workload-specific business logic (the
+# PromQL query, the metric labels), not something a generic base chart
+# should own. A consuming values file (e.g. qrcode-api's, see
+# k8s-deployment-strategy-gitops/environments/dev/values/qrcode-api.yaml
+# for a real, working example) supplies its own AnalysisTemplate alongside
+# its other resources and references it by name here, replacing an
+# indefinite manual pause: {} with a timed pause backed by that analysis --
+# a human can still promote/abort manually at any point regardless.
 rollout:
   enabled: false
-  # Canary steps (setWeight/pause/etc.), passed through to
+  # Canary steps (setWeight/pause/analysis/etc.), passed through to
   # spec.strategy.canary.steps as-is. Empty by default is intentional, not
   # an oversight: per Argo Rollouts' own docs, an omitted/empty steps list
   # makes the canary strategy mimic a normal rolling update (maxSurge/
@@ -197,9 +205,15 @@ rollout:
   # low-drama default rather than a foot-gun.
   steps: []
   # - setWeight: 20
-  # - pause: {}
+  # - pause: {duration: 60s}
+  # - analysis:
+  #     templates:
+  #     - templateName: my-analysis-template
+  #     args:
+  #     - name: service-name
+  #       value: my-app-canary
   # - setWeight: 50
-  # - pause: {duration: 5m}
+  # - pause: {duration: 60s}
 
 # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
 autoscaling:
