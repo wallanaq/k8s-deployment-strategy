@@ -1,8 +1,17 @@
+# Prune=false: once this is Argo CD-managed, this PVC must never be deleted
+# by Argo CD under any circumstance -- deleting it destroys the actual
+# Postgres data, not just a resource definition. Not covering the DB
+# credentials Secret with the same annotation: that Secret is intentionally
+# never GitOps-managed at all (created imperatively, real credentials never
+# committed), so Argo CD never tracks or could prune it in the first place --
+# the same protective intent is already satisfied structurally.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: qrcode-api-postgres-data
   namespace: postgres
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes:
     - ReadWriteOnce
